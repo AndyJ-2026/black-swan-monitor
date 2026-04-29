@@ -13,29 +13,44 @@ on:
       report:
         description: 'Markdown report content'
         required: true
+  push:
+    paths:
+      - 'reports/latest.json'
 
 jobs:
   send:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+
       - name: Send to Lark webhook
         env:
           LARK_WEBHOOK: ${{ secrets.LARK_WEBHOOK_URL }}
-          HEADER_TITLE: ${{ inputs.header_title }}
-          HEADER_COLOR: ${{ inputs.header_color }}
-          REPORT: ${{ inputs.report }}
         run: |
           python3 -c "
-          import json, os, urllib.request
+          import json, os, urllib.request, sys
+
+          if os.environ.get('GITHUB_EVENT_NAME') == 'push':
+              with open('reports/latest.json', 'r') as f:
+                  data = json.load(f)
+              header_title = data['header_title']
+              header_color = data['header_color']
+              report = data['report']
+          else:
+              header_title = '''${{ inputs.header_title }}'''
+              header_color = '''${{ inputs.header_color }}'''
+              report = '''${{ inputs.report }}'''
 
           card = {
               'msg_type': 'interactive',
               'card': {
                   'header': {
-                      'title': {'tag': 'plain_text', 'content': os.environ['HEADER_TITLE']},
-                      'template': os.environ['HEADER_COLOR']
+                      'title': {'tag': 'plain_text', 'content': header_title},
+                      'template': header_color
                   },
-                  'elements': [{'tag': 'markdown', 'content': os.environ['REPORT']}]
+                  'elements': [{'tag': 'markdown', 'content': report}]
               }
           }
 
@@ -46,5 +61,8 @@ jobs:
               headers={'Content-Type': 'application/json'}
           )
           resp = urllib.request.urlopen(req)
-          print(resp.read().decode())
+          result = resp.read().decode()
+          print(result)
+          if '\"code\":0' not in result:
+              sys.exit(1)
           "
