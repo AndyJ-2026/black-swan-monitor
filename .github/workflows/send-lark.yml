@@ -1,0 +1,50 @@
+name: Send Lark Alert
+
+on:
+  workflow_dispatch:
+    inputs:
+      header_title:
+        description: 'Card header title'
+        required: true
+      header_color:
+        description: 'Card header color (red/orange/green)'
+        required: true
+        default: 'orange'
+      report:
+        description: 'Markdown report content'
+        required: true
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send to Lark webhook
+        env:
+          LARK_WEBHOOK: ${{ secrets.LARK_WEBHOOK_URL }}
+          HEADER_TITLE: ${{ inputs.header_title }}
+          HEADER_COLOR: ${{ inputs.header_color }}
+          REPORT: ${{ inputs.report }}
+        run: |
+          python3 -c "
+          import json, os, urllib.request
+
+          card = {
+              'msg_type': 'interactive',
+              'card': {
+                  'header': {
+                      'title': {'tag': 'plain_text', 'content': os.environ['HEADER_TITLE']},
+                      'template': os.environ['HEADER_COLOR']
+                  },
+                  'elements': [{'tag': 'markdown', 'content': os.environ['REPORT']}]
+              }
+          }
+
+          data = json.dumps(card, ensure_ascii=False).encode('utf-8')
+          req = urllib.request.Request(
+              os.environ['LARK_WEBHOOK'],
+              data=data,
+              headers={'Content-Type': 'application/json'}
+          )
+          resp = urllib.request.urlopen(req)
+          print(resp.read().decode())
+          "
