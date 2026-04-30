@@ -3,6 +3,7 @@ import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 
 const RELAY_SECRET = "bsm-9f3a7c";
+const FIRECRAWL_API_KEY = "fc-933c9b80dfbd4675ad15f2602646bff6";
 
 export class BlackSwanMCP extends McpAgent {
 	server = new McpServer({
@@ -88,6 +89,47 @@ export class BlackSwanMCP extends McpAgent {
 				} catch (e: any) {
 					return {
 						content: [{ type: "text", text: `Send error: ${e.message}` }],
+					};
+				}
+			},
+		);
+		// Scrape a JS-rendered page via Firecrawl (works on x.com/Twitter)
+		this.server.registerTool(
+			"scrape_page",
+			{
+				description: "Scrape a JavaScript-rendered page using Firecrawl. Returns clean markdown content. Works on Twitter/X pages.",
+				inputSchema: {
+					url: z.string().describe("The URL to scrape"),
+				},
+			},
+			async ({ url }) => {
+				try {
+					const resp = await fetch("https://api.firecrawl.dev/v1/scrape", {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							"Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+						},
+						body: JSON.stringify({
+							url,
+							formats: ["markdown"],
+							waitFor: 3000,
+						}),
+					});
+					const data = await resp.json() as any;
+					if (!data.success) {
+						return {
+							content: [{ type: "text", text: `Scrape failed: ${data.error || "unknown error"}` }],
+						};
+					}
+					const md = data.data?.markdown || "";
+					const truncated = md.length > 30000 ? md.slice(0, 30000) + "\n...[truncated]" : md;
+					return {
+						content: [{ type: "text", text: truncated }],
+					};
+				} catch (e: any) {
+					return {
+						content: [{ type: "text", text: `Scrape error: ${e.message}` }],
 					};
 				}
 			},
