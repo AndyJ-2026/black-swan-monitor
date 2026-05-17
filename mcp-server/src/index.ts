@@ -10,6 +10,68 @@ const WEBHOOK_SECRETS: Record<string, string> = {
 };
 const FIRECRAWL_API_KEY = "fc-933c9b80dfbd4675ad15f2602646bff6";
 
+async function buildLarkCard({
+	webhookUrl,
+	headerTitle,
+	headerColor,
+	content,
+	webhookSecret,
+}: {
+	webhookUrl: string;
+	headerTitle: string;
+	headerColor: "red" | "orange" | "green" | "blue";
+	content: string;
+	webhookSecret?: string;
+}) {
+	const card: Record<string, any> = {
+		msg_type: "interactive",
+		card: {
+			header: {
+				title: { tag: "plain_text", content: headerTitle },
+				template: headerColor,
+			},
+			elements: [{ tag: "markdown", content }],
+		},
+	};
+
+	const urlId = webhookUrl.split("/").pop() || "";
+	const signingSecret = webhookSecret || WEBHOOK_SECRETS[urlId];
+
+	if (signingSecret) {
+		const timestamp = Math.floor(Date.now() / 1000).toString();
+		const stringToSign = `${timestamp}\n${signingSecret}`;
+		const encoder = new TextEncoder();
+		const key = await crypto.subtle.importKey(
+			"raw",
+			encoder.encode(stringToSign),
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			["sign"],
+		);
+		const signature = await crypto.subtle.sign("HMAC", key, new Uint8Array(0));
+		card.timestamp = timestamp;
+		card.sign = btoa(String.fromCharCode(...new Uint8Array(signature)));
+	}
+
+	return card;
+}
+
+async function sendLarkCard(params: {
+	webhookUrl: string;
+	headerTitle: string;
+	headerColor: "red" | "orange" | "green" | "blue";
+	content: string;
+	webhookSecret?: string;
+}) {
+	const card = await buildLarkCard(params);
+	const resp = await fetch(params.webhookUrl, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(card),
+	});
+	return { status: resp.status, body: await resp.text() };
+}
+
 export class BlackSwanMCP extends McpAgent {
 	server = new McpServer({
 		name: "Black Swan Monitor",
@@ -71,48 +133,16 @@ export class BlackSwanMCP extends McpAgent {
 					};
 				}
 
-				const card: Record<string, any> = {
-					msg_type: "interactive",
-					card: {
-						header: {
-							title: { tag: "plain_text", content: header_title },
-							template: header_color,
-						},
-						elements: [{ tag: "markdown", content }],
-					},
-				};
-
-				// Determine webhook signing secret: explicit param > lookup by URL
-				const urlId = webhook_url.split("/").pop() || "";
-				const signingSecret = webhook_secret || WEBHOOK_SECRETS[urlId];
-
-				// Add Lark webhook signature if signing secret is available
-				if (signingSecret) {
-					const timestamp = Math.floor(Date.now() / 1000).toString();
-					const stringToSign = `${timestamp}\n${signingSecret}`;
-					const encoder = new TextEncoder();
-					const key = await crypto.subtle.importKey(
-						"raw",
-						encoder.encode(stringToSign),
-						{ name: "HMAC", hash: "SHA-256" },
-						false,
-						["sign"],
-					);
-					const signature = await crypto.subtle.sign("HMAC", key, new Uint8Array(0));
-					const sign = btoa(String.fromCharCode(...new Uint8Array(signature)));
-					card.timestamp = timestamp;
-					card.sign = sign;
-				}
-
 				try {
-					const resp = await fetch(webhook_url, {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify(card),
+					const result = await sendLarkCard({
+						webhookUrl: webhook_url,
+						headerTitle: header_title,
+						headerColor: header_color,
+						content,
+						webhookSecret: webhook_secret,
 					});
-					const result = await resp.text();
 					return {
-						content: [{ type: "text", text: result }],
+						content: [{ type: "text", text: result.body }],
 					};
 				} catch (e: any) {
 					return {
@@ -200,11 +230,32 @@ export class BlackSwanMCP extends McpAgent {
 }
 
 export default {
-	fetch(request: Request, env: Env, ctx: ExecutionContext) {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
 		const url = new URL(request.url);
 
 		if (url.pathname === "/mcp") {
 			return BlackSwanMCP.serve("/mcp").fetch(request, env, ctx);
+		}
+
+		if (url.pathname === "/send-lark" && request.method === "POST") {
+			try {
+				const body: any = await request.json();
+				if (body.secret !== RELAY_SECRET) {
+					return Response.json({ ok: false, error: "Invalid secret" }, { status: 401 });
+				}
+
+				const result = await sendLarkCard({
+					webhookUrl: body.webhook_url,
+					headerTitle: body.header_title || "加密货币日报",
+					headerColor: body.header_color || "blue",
+					content: body.content,
+					webhookSecret: body.webhook_secret,
+				});
+
+				return Response.json({ ok: result.status >= 200 && result.status < 300, status: result.status, body: result.body });
+			} catch (e: any) {
+				return Response.json({ ok: false, error: e.message }, { status: 500 });
+			}
 		}
 
 		return new Response("Black Swan MCP Server", { status: 200 });
