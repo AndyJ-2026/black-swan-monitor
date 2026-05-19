@@ -3,6 +3,16 @@ import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 
 const RELAY_SECRET = "bsm-9f3a7c";
+const CRYPTO_DAILY_OWNER = "AndyJ-2026";
+const CRYPTO_DAILY_REPO = "crypto-daily-report";
+const CRYPTO_DAILY_WORKFLOW = "crypto-daily-report.yml";
+const CRYPTO_DAILY_DISPATCH_TIMEOUT_MS = 10000;
+
+type Env = {
+	CRYPTO_DAILY_LARK_WEBHOOK_URL?: string;
+	CRYPTO_DAILY_LARK_WEBHOOK_SECRET?: string;
+	CRYPTO_DAILY_GITHUB_TOKEN?: string;
+};
 
 // Lark webhook signing secrets (webhook_url suffix → secret)
 const WEBHOOK_SECRETS: Record<string, string> = {
@@ -72,6 +82,44 @@ async function sendLarkCard(params: {
 	return { status: resp.status, body: await resp.text() };
 }
 
+async function dispatchCryptoDailyWorkflow(env: Env, dryRun = false) {
+	if (!env.CRYPTO_DAILY_GITHUB_TOKEN) {
+		throw new Error("Missing CRYPTO_DAILY_GITHUB_TOKEN");
+	}
+
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), CRYPTO_DAILY_DISPATCH_TIMEOUT_MS);
+	try {
+		const resp = await fetch(
+			`https://api.github.com/repos/${CRYPTO_DAILY_OWNER}/${CRYPTO_DAILY_REPO}/actions/workflows/${CRYPTO_DAILY_WORKFLOW}/dispatches`,
+			{
+				method: "POST",
+				headers: {
+					"Accept": "application/vnd.github+json",
+					"Authorization": `Bearer ${env.CRYPTO_DAILY_GITHUB_TOKEN}`,
+					"Content-Type": "application/json",
+					"User-Agent": "black-swan-mcp-cloudflare-cron",
+					"X-GitHub-Api-Version": "2022-11-28",
+				},
+				body: JSON.stringify({
+					ref: "main",
+					inputs: { dry_run: dryRun ? "true" : "false" },
+				}),
+				signal: controller.signal,
+			},
+		);
+
+		const body = await resp.text();
+		if (resp.status !== 204) {
+			throw new Error(`GitHub dispatch failed: HTTP ${resp.status} ${body}`);
+		}
+	} finally {
+		clearTimeout(timeout);
+	}
+
+	return { ok: true, status: 204, dryRun };
+}
+
 export class BlackSwanMCP extends McpAgent {
 	server = new McpServer({
 		name: "Black Swan Monitor",
@@ -87,7 +135,7 @@ export class BlackSwanMCP extends McpAgent {
 				inputSchema: {
 					url: z.string().describe("The URL to fetch"),
 					method: z.enum(["GET", "POST"]).default("GET").describe("HTTP method"),
-					headers: z.record(z.string()).optional().describe("Optional HTTP headers"),
+					headers: z.record(z.string(), z.string()).optional().describe("Optional HTTP headers"),
 					body: z.string().optional().describe("Optional request body for POST"),
 				},
 			},
@@ -95,7 +143,7 @@ export class BlackSwanMCP extends McpAgent {
 				try {
 					const resp = await fetch(url, {
 						method,
-						headers: headers || {},
+						headers: (headers || {}) as HeadersInit,
 						body: method === "POST" ? body : undefined,
 					});
 					const text = await resp.text();
@@ -258,6 +306,25 @@ export default {
 			}
 		}
 
+		if (url.pathname === "/crypto-daily-report/run" && request.method === "POST") {
+			try {
+				const body: any = await request.json().catch(() => ({}));
+				if (body.secret !== RELAY_SECRET) {
+					return Response.json({ ok: false, error: "Invalid secret" }, { status: 401 });
+				}
+
+				const result = await dispatchCryptoDailyWorkflow(env, body.dry_run === true);
+
+				return Response.json(result);
+			} catch (e: any) {
+				return Response.json({ ok: false, error: e.message }, { status: 500 });
+			}
+		}
+
 		return new Response("Black Swan MCP Server", { status: 200 });
+	},
+
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+		ctx.waitUntil(dispatchCryptoDailyWorkflow(env, false));
 	},
 };
