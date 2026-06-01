@@ -7,11 +7,15 @@ const CRYPTO_DAILY_OWNER = "AndyJ-2026";
 const CRYPTO_DAILY_REPO = "crypto-daily-report";
 const CRYPTO_DAILY_WORKFLOW = "crypto-daily-report.yml";
 const CRYPTO_DAILY_DISPATCH_TIMEOUT_MS = 10000;
+const BLACK_SWAN_OWNER = "AndyJ-2026";
+const BLACK_SWAN_REPO = "black-swan-monitor";
+const BLACK_SWAN_WORKFLOW = "black-swan-monitor.yml";
 
 type Env = {
 	CRYPTO_DAILY_LARK_WEBHOOK_URL?: string;
 	CRYPTO_DAILY_LARK_WEBHOOK_SECRET?: string;
 	CRYPTO_DAILY_GITHUB_TOKEN?: string;
+	BLACK_SWAN_GITHUB_TOKEN?: string;
 };
 
 // Lark webhook signing secrets (webhook_url suffix → secret)
@@ -83,27 +87,66 @@ async function sendLarkCard(params: {
 }
 
 async function dispatchCryptoDailyWorkflow(env: Env, dryRun = false) {
-	if (!env.CRYPTO_DAILY_GITHUB_TOKEN) {
-		throw new Error("Missing CRYPTO_DAILY_GITHUB_TOKEN");
-	}
+	return dispatchGithubWorkflow({
+		token: env.CRYPTO_DAILY_GITHUB_TOKEN,
+		owner: CRYPTO_DAILY_OWNER,
+		repo: CRYPTO_DAILY_REPO,
+		workflow: CRYPTO_DAILY_WORKFLOW,
+		userAgent: "black-swan-mcp-cloudflare-cron",
+		inputs: { dry_run: dryRun ? "true" : "false" },
+		missingTokenMessage: "Missing CRYPTO_DAILY_GITHUB_TOKEN",
+	});
+}
 
+async function dispatchBlackSwanWorkflow(env: Env, dryRun = false) {
+	return dispatchGithubWorkflow({
+		token: env.BLACK_SWAN_GITHUB_TOKEN || env.CRYPTO_DAILY_GITHUB_TOKEN,
+		owner: BLACK_SWAN_OWNER,
+		repo: BLACK_SWAN_REPO,
+		workflow: BLACK_SWAN_WORKFLOW,
+		userAgent: "black-swan-monitor-cloudflare-cron",
+		inputs: { dry_run: dryRun ? "true" : "false", scan_limit: "0", scan_buckets: "3" },
+		missingTokenMessage: "Missing BLACK_SWAN_GITHUB_TOKEN",
+	});
+}
+
+async function dispatchGithubWorkflow({
+	token,
+	owner,
+	repo,
+	workflow,
+	userAgent,
+	inputs,
+	missingTokenMessage,
+}: {
+	token?: string;
+	owner: string;
+	repo: string;
+	workflow: string;
+	userAgent: string;
+	inputs: Record<string, string>;
+	missingTokenMessage: string;
+}) {
+	if (!token) {
+		throw new Error(missingTokenMessage);
+	}
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), CRYPTO_DAILY_DISPATCH_TIMEOUT_MS);
 	try {
 		const resp = await fetch(
-			`https://api.github.com/repos/${CRYPTO_DAILY_OWNER}/${CRYPTO_DAILY_REPO}/actions/workflows/${CRYPTO_DAILY_WORKFLOW}/dispatches`,
+			`https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`,
 			{
 				method: "POST",
 				headers: {
 					"Accept": "application/vnd.github+json",
-					"Authorization": `Bearer ${env.CRYPTO_DAILY_GITHUB_TOKEN}`,
+					"Authorization": `Bearer ${token}`,
 					"Content-Type": "application/json",
-					"User-Agent": "black-swan-mcp-cloudflare-cron",
+					"User-Agent": userAgent,
 					"X-GitHub-Api-Version": "2022-11-28",
 				},
 				body: JSON.stringify({
 					ref: "main",
-					inputs: { dry_run: dryRun ? "true" : "false" },
+					inputs,
 				}),
 				signal: controller.signal,
 			},
@@ -117,7 +160,7 @@ async function dispatchCryptoDailyWorkflow(env: Env, dryRun = false) {
 		clearTimeout(timeout);
 	}
 
-	return { ok: true, status: 204, dryRun };
+	return { ok: true, status: 204, repo: `${owner}/${repo}`, workflow, inputs };
 }
 
 export class BlackSwanMCP extends McpAgent {
@@ -321,10 +364,29 @@ export default {
 			}
 		}
 
+		if (url.pathname === "/black-swan-monitor/run" && request.method === "POST") {
+			try {
+				const body: any = await request.json().catch(() => ({}));
+				if (body.secret !== RELAY_SECRET) {
+					return Response.json({ ok: false, error: "Invalid secret" }, { status: 401 });
+				}
+
+				const result = await dispatchBlackSwanWorkflow(env, body.dry_run === true);
+
+				return Response.json(result);
+			} catch (e: any) {
+				return Response.json({ ok: false, error: e.message }, { status: 500 });
+			}
+		}
+
 		return new Response("Black Swan MCP Server", { status: 200 });
 	},
 
 	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-		ctx.waitUntil(dispatchCryptoDailyWorkflow(env, false));
+		if (controller.cron === "30 2 * * *") {
+			ctx.waitUntil(dispatchCryptoDailyWorkflow(env, false));
+			return;
+		}
+		ctx.waitUntil(dispatchBlackSwanWorkflow(env, false));
 	},
 };
