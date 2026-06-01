@@ -26,6 +26,14 @@ class RiskMonitorTests(unittest.TestCase):
         self.assertEqual(cookies["auth_token"], "abc")
         self.assertEqual(cookies["ct0"], "def")
 
+    def test_project_relevance_filters_other_project_news(self):
+        account = risk_monitor.Account("TLF", "tradeleaf")
+        other_project_news = "#Aave sees $5B outflows after a $290M exploit"
+        own_project_alert = "Our bridge is halted while the team investigates a contract issue"
+
+        self.assertFalse(risk_monitor.is_project_relevant(account, other_project_news))
+        self.assertTrue(risk_monitor.is_project_relevant(account, own_project_alert))
+
     def test_dedupes_identical_coin_and_event(self):
         now = risk_monitor.utc_now().isoformat()
         candidate = risk_monitor.CandidateEvent(

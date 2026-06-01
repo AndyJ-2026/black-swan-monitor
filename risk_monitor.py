@@ -556,7 +556,53 @@ def extract_relevant_lines(text: str, max_lines: int = 8) -> str:
     return "\n".join(unique[:max_lines])
 
 
+def is_project_relevant(account: Account, text: str) -> bool:
+    lower = text.lower()
+    coin = re.escape(account.coin.lower())
+    handle = re.escape(account.handle.lower())
+    if re.search(rf"(?<![a-z0-9])[$#]?{coin}(?![a-z0-9])", lower):
+        return True
+    if account.handle and re.search(rf"(?<![a-z0-9_])@?{handle}(?![a-z0-9_])", lower):
+        return True
+
+    first_person_patterns = [
+        r"\bwe\b",
+        r"\bwe['’]re\b",
+        r"\bwe are\b",
+        r"\bour\b",
+        r"\bours\b",
+        r"\bus\b",
+        r"\bteam\b",
+        r"\bcommunity\b",
+        r"\bprotocol\b",
+        r"\bbridge\b",
+        r"\bcontract\b",
+        r"\bwallet\b",
+        r"\bapp\b",
+        r"\bdapp\b",
+        r"\bmainnet\b",
+        r"\btoken\b",
+        r"\busers\b",
+        "用户",
+        "我们",
+        "团队",
+        "社区",
+        "协议",
+        "合约",
+        "钱包",
+        "应用",
+        "主网",
+        "代币",
+    ]
+    if any(re.search(pattern, lower) for pattern in first_person_patterns):
+        return True
+
+    return False
+
+
 def build_event_from_text(account: Account, text: str, source: str, url: str) -> Optional[CandidateEvent]:
+    if not is_project_relevant(account, text):
+        return None
     context = extract_relevant_lines(text)
     if not context:
         return None
@@ -575,7 +621,14 @@ def scan_x_native(account: Account, x_client: XWebClient) -> Optional[CandidateE
     tweets = x_client.get_tweets(account)
     if not tweets:
         return None
-    combined = "\n\n".join(f"{tweet.url}\n{tweet.text}" for tweet in tweets)
+    relevant_tweets = []
+    for tweet in tweets:
+        text = f"{tweet.url}\n{tweet.text}"
+        if is_project_relevant(account, tweet.text) and extract_relevant_lines(tweet.text):
+            relevant_tweets.append(text)
+    if not relevant_tweets:
+        return None
+    combined = "\n\n".join(relevant_tweets)
     return build_event_from_text(account, combined, "x_native_graphql", f"https://x.com/{account.handle}")
 
 
