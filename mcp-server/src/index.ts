@@ -105,7 +105,7 @@ async function dispatchBlackSwanWorkflow(env: Env, dryRun = false) {
 		repo: BLACK_SWAN_REPO,
 		workflow: BLACK_SWAN_WORKFLOW,
 		userAgent: "black-swan-monitor-cloudflare-cron",
-		inputs: { dry_run: dryRun ? "true" : "false", scan_limit: "120" },
+		inputs: { dry_run: dryRun ? "true" : "false", scan_limit: "0", scan_buckets: "3" },
 		missingTokenMessage: "Missing BLACK_SWAN_GITHUB_TOKEN",
 	});
 }

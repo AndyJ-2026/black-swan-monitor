@@ -10,7 +10,11 @@ on:
       scan_limit:
         description: "Number of token Twitter accounts to scan"
         required: false
-        default: "120"
+        default: "0"
+      scan_buckets:
+        description: "Split project accounts into N buckets to reduce X rate-limit risk"
+        required: false
+        default: "3"
 
 permissions:
   contents: write
@@ -37,15 +41,17 @@ jobs:
 
       - name: Run monitor
         env:
-          BSM_SCAN_LIMIT: ${{ github.event.inputs.scan_limit || '120' }}
+          BSM_SCAN_LIMIT: ${{ github.event.inputs.scan_limit || '0' }}
+          BSM_SCAN_BUCKETS: ${{ github.event.inputs.scan_buckets || '3' }}
           BSM_MAX_WORKERS: "8"
           BSM_SEND_LARK: "true"
           BSM_RELAY_URL: ${{ secrets.BSM_RELAY_URL }}
           BSM_RELAY_SECRET: ${{ secrets.BSM_RELAY_SECRET }}
           BSM_LARK_WEBHOOK_URL: ${{ secrets.BSM_LARK_WEBHOOK_URL || secrets.LARK_WEBHOOK_URL }}
           BSM_LARK_WEBHOOK_SECRET: ${{ secrets.BSM_LARK_WEBHOOK_SECRET }}
+          BSM_X_COOKIES_JSON: ${{ secrets.BSM_X_COOKIES_JSON }}
         run: |
-          args=("--limit" "${BSM_SCAN_LIMIT}" "--send")
+          args=("--limit" "${BSM_SCAN_LIMIT}" "--buckets" "${BSM_SCAN_BUCKETS}" "--send")
           if [ "${{ github.event.inputs.dry_run || 'false' }}" = "true" ]; then
             args+=("--dry-run")
           fi
