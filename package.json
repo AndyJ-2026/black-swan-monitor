@@ -1,0 +1,18 @@
+{
+  "name": "black-swan-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scan:x-risk": "node cdp_x_scan.mjs --launch-chrome --minimax",
+    "scan:x-risk:dry": "node cdp_x_scan.mjs --launch-chrome --minimax --dry-run",
+    "scan:x-risk:batches": "node x_scan_batches.mjs --minimax --write-state",
+    "scan:x-risk:batches:dry": "node x_scan_batches.mjs --minimax",
+    "scan:x-risk:stable:dry": "node x_scan_batches.mjs --stable --minimax",
+    "scan:x-risk:stable": "node x_scan_batches.mjs --stable --minimax --write-state",
+    "test": "node --test tests/x_event_rules.test.mjs tests/contract_scan.test.mjs tests/prepare_contract_tokens.test.mjs tests/probe_evm_chains.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

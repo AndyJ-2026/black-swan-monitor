@@ -98,14 +98,20 @@ async function dispatchCryptoDailyWorkflow(env: Env, dryRun = false) {
 	});
 }
 
-async function dispatchBlackSwanWorkflow(env: Env, dryRun = false) {
+async function dispatchBlackSwanWorkflow(env: Env, dryRun = false, pool: "priority" | "stable" | "all" = "priority") {
 	return dispatchGithubWorkflow({
 		token: env.BLACK_SWAN_GITHUB_TOKEN || env.CRYPTO_DAILY_GITHUB_TOKEN,
 		owner: BLACK_SWAN_OWNER,
 		repo: BLACK_SWAN_REPO,
 		workflow: BLACK_SWAN_WORKFLOW,
 		userAgent: "black-swan-monitor-cloudflare-cron",
-		inputs: { dry_run: dryRun ? "true" : "false", scan_limit: "0", scan_buckets: "3" },
+		inputs: {
+			dry_run: dryRun ? "true" : "false",
+			mode: "x_batches",
+			pool,
+			batch_size: "40",
+			max_batches: "0",
+		},
 		missingTokenMessage: "Missing BLACK_SWAN_GITHUB_TOKEN",
 	});
 }
@@ -371,7 +377,8 @@ export default {
 					return Response.json({ ok: false, error: "Invalid secret" }, { status: 401 });
 				}
 
-				const result = await dispatchBlackSwanWorkflow(env, body.dry_run === true);
+				const pool = body.pool === "stable" || body.pool === "all" ? body.pool : "priority";
+				const result = await dispatchBlackSwanWorkflow(env, body.dry_run === true, pool);
 
 				return Response.json(result);
 			} catch (e: any) {
@@ -387,6 +394,10 @@ export default {
 			ctx.waitUntil(dispatchCryptoDailyWorkflow(env, false));
 			return;
 		}
-		ctx.waitUntil(dispatchBlackSwanWorkflow(env, false));
+		if (controller.cron === "0 1 * * 1") {
+			ctx.waitUntil(dispatchBlackSwanWorkflow(env, false, "stable"));
+			return;
+		}
+		ctx.waitUntil(dispatchBlackSwanWorkflow(env, false, "priority"));
 	},
 };
